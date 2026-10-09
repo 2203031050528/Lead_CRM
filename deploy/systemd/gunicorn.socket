@@ -1,0 +1,12 @@
+[Unit]
+Description=Lead CRM Gunicorn socket
+
+[Socket]
+ListenStream=/run/gunicorn.sock
+# Only Nginx (www-data) may connect.
+SocketUser=www-data
+SocketGroup=www-data
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target

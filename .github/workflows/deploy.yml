@@ -1,0 +1,80 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never interrupt a deploy half-way
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-24.04
+    environment: production
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the frontend (static export)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: SSH key and known host
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          test -n "$EC2_HOST" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS" || {
+            echo "Set the EC2_HOST, EC2_SSH_KEY and EC2_KNOWN_HOSTS secrets (see README)"; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload and release
+        run: |
+          ssh_cmd="ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=yes"
+          target="$EC2_USER@$EC2_HOST"
+          sync() { rsync -az --rsync-path="sudo rsync" --chown=crm:crm -e "$ssh_cmd" "$@"; }
+
+          sync --delete \
+            --exclude '.venv/' --exclude '__pycache__/' --exclude '*.pyc' --exclude '.env' \
+            --exclude 'staticfiles/' --exclude '.pytest_cache/' --exclude '.ruff_cache/' --exclude 'tests/' \
+            backend/ "$target:/srv/crm/backend/"
+          sync --delete deploy/ "$target:/srv/crm/deploy/"
+          # New frontend files first; old ones are removed only after the release succeeds,
+          # so browsers holding the previous HTML don't hit missing chunks mid-deploy.
+          sync frontend/out/ "$target:/srv/crm/frontend/out/"
+
+          $ssh_cmd "$target" sudo bash /srv/crm/deploy/remote_deploy.sh
+
+          sync --delete frontend/out/ "$target:/srv/crm/frontend/out/"
+
+      - name: Smoke test through Nginx
+        env:
+          domain: ${{ secrets.CRM_DOMAIN }}
+        run: |
+          if [ -n "$domain" ]; then
+            curl -fsS "https://$domain/api/v1/health/"
+            curl -fsS -o /dev/null "https://$domain/login"
+          else
+            echo "CRM_DOMAIN secret not set; skipping the public smoke test"
+          fi

@@ -1,0 +1,47 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Attachments",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::ATTACHMENTS_BUCKET/attachments/*"
+    },
+    {
+      "Sid": "ListAttachments",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::ATTACHMENTS_BUCKET",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "attachments/*"
+        }
+      }
+    },
+    {
+      "Sid": "Backups",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::BACKUP_BUCKET/backups/*"
+    },
+    {
+      "Sid": "ListBackups",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::BACKUP_BUCKET",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "backups/*"
+        }
+      }
+    }
+  ]
+}

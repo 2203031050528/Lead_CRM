@@ -1,0 +1,27 @@
+# Scheduled jobs for Lead CRM.
+#
+# Install as /etc/cron.d/crm (root:root, mode 0644) - deploy/setup_server.sh does this.
+# The name must not contain a dot: Debian's cron silently ignores /etc/cron.d files like "crm.cron".
+#
+# - Times are in the server's timezone: UTC on a stock EC2 instance (IST = UTC+5:30).
+# - Jobs run as the "crm" app user and read settings from DJANGO_ENV_FILE, the same file Gunicorn uses.
+# - flock -n skips a run while the previous one is still going (e.g. a slow SMTP server), so runs
+#   never pile up on the 1 GB instance.
+# - Output goes to journald:  journalctl -t crm-reminders -t crm-backup -t crm-cleanup --since today
+# - Try a job by hand:  sudo -u crm env DJANGO_SETTINGS_MODULE=config.settings.prod \
+#     DJANGO_ENV_FILE=/etc/crm/crm.env /srv/crm/venv/bin/python /srv/crm/backend/manage.py send_task_reminders --dry-run
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=""
+DJANGO_SETTINGS_MODULE=config.settings.prod
+DJANGO_ENV_FILE=/etc/crm/crm.env
+
+# Task reminders: every 15 minutes, for open tasks due within the next hour.
+*/15 * * * *  crm  cd /srv/crm/backend && flock -n /run/lock/crm-reminders.lock /srv/crm/venv/bin/python manage.py send_task_reminders 2>&1 | logger -t crm-reminders
+
+# Database backup to S3 (AWS_BACKUP_BUCKET_NAME): nightly at 21:30 UTC = 03:00 IST. Keeps the newest 14.
+30 21 * * *   crm  cd /srv/crm/backend && flock -n /run/lock/crm-backup.lock /srv/crm/venv/bin/python manage.py backup_db 2>&1 | logger -t crm-backup
+
+# Notification cleanup: Sundays at 22:00 UTC = Monday 03:30 IST. Read notifications older than 60 days.
+0 22 * * 0    crm  cd /srv/crm/backend && flock -n /run/lock/crm-cleanup.lock /srv/crm/venv/bin/python manage.py cleanup_notifications 2>&1 | logger -t crm-cleanup
